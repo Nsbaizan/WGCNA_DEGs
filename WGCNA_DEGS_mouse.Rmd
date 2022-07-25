@@ -1,0 +1,43 @@
+---
+title: "WGCNA_DEGs_mouse"
+author: "Núria Sánchez Baizan"
+date: "25/7/2022"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+## 1. Set the environment and load the data.
+```{r}
+# Load the WGCNA package
+library(WGCNA);
+```
+
+```{r}
+#Load the RNA-seq dataset of normalized counts. This includes 12 samples, 3 females and 3 males at E.12.5 and and 3 females and 3 males at E.16.5. The datasat includes 14,089 genes. 
+setwd("~/path/to/my_directory_that_contains_WGCNADEGs_folder")
+datExpr0 <-as.data.frame(normalized_counts_ok)
+rownames(datExpr0)<-datExpr0$Mouse
+datExpr0<-datExpr0[,-1]
+datExpr0<-as.matrix(datExpr0)
+```
+
+## 2. Sample outlier detecction
+We produce a sample dendrogram to visualize potential outliers. We set the thershold at height=30 because it removes the highest sample, F2_S2.
+```{r}
+sampleTree = hclust(dist(datExpr0), method = "average");
+# Plot the sample tree: Open a graphic output window of size 12 by 9 inches
+# The user should change the dimensions if the window is too large or too small.
+sizeGrWindow(12,9)
+#pdf(file = "Plots/sampleClustering.pdf", width = 12, height = 9);
+par(cex = 0.6);
+par(mar = c(0,4,2,0))
+plot(sampleTree, main = "Sample clustering to detect outliers", sub="", xlab="", cex.lab = 1.5, 
+     cex.axis = 1.5, cex.main = 2)
+abline(h = 30, col = "red");
+
+```
+
