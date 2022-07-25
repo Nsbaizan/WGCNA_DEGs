@@ -1,6 +1,6 @@
 # WGCNA_DEGs
 This code provides a strategy for improved biomarker discovery from your transcriptomic data. It consists in building a co-expression network from an entire dataset, and only thereafter filtering by DEGs. This method can be applied in transcriptomic studies, regardless of biological system, species or question being considered.
-If you are using shinyheatmap in your work, please cite the paper (*link to the paper once it is published*)
+If you are using WGCNA_DEGs in your work, please cite the paper (*link to the paper once it is published*)
 
 # Citation
 Sánchez-Baizán, N., Ribas, L., Piferrer, F (2022). "Improved biomarker discovery through a plot twist in transcriptomic data analysis." *insert here info to cite the paper*
