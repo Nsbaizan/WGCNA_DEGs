@@ -1,0 +1,466 @@
+---
+title: "WGCNA_DEGs_mouse"
+author: "Núria Sánchez Baizan"
+date: "25/7/2022"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+## 1. Set the environment and load the data.
+```{r}
+# Load the WGCNA package
+library(WGCNA);
+library(dplyr)
+```
+
+```{r}
+#Load the RNA-seq dataset of normalized counts. This includes 12 samples, 3 females and 3 males at E.12.5 and and 3 females and 3 males at E.16.5. The datasat includes 14,089 genes. 
+setwd("~/path/to/my_directory_that_contains_WGCNADEGs_folder")
+datExpr0 <-as.data.frame(normalized_counts_ok)
+rownames(datExpr0)<-datExpr0$Mouse
+datExpr0<-datExpr0[,-1]
+datExpr0<-as.matrix(datExpr0)
+```
+
+## 2. Sample outlier detecction
+We produce a sample dendrogram to visualize potential outliers. We set the thershold at height=30 because it removes the highest sample, F2_S2.
+```{r}
+sampleTree = hclust(dist(datExpr0), method = "average");
+# Plot the sample tree: Open a graphic output window of size 12 by 9 inches
+# The user should change the dimensions if the window is too large or too small.
+sizeGrWindow(12,9)
+#pdf(file = "Plots/sampleClustering.pdf", width = 12, height = 9);
+par(cex = 0.6);
+par(mar = c(0,4,2,0))
+plot(sampleTree, main = "Sample clustering to detect outliers", sub="", xlab="", cex.lab = 1.5, 
+     cex.axis = 1.5, cex.main = 2)
+abline(h = 30, col = "red");
+
+```
+Now, we eliminate the sample and double check. To eliminate the sample we keep all that are grouped at least in groups of 2 and below the height of 30. The variable clust contains the information on which group is each sample. Filter by the ones you want to keep. In this case we keep all that are not listed in group 0.
+```{r}
+
+# Determine cluster under the line
+clust = cutreeStatic(sampleTree, cutHeight = 30, minSize = 2)
+table(clust)
+# clust 1 contains the samples we want to keep.
+keepSamples = (clust!=0)
+datExpr = datExpr0[keepSamples, ]
+nGenes = ncol(datExpr)
+nSamples = nrow(datExpr)
+sampleTree = hclust(dist(datExpr), method = "average");
+par(cex = 0.6);
+par(mar = c(0,4,2,0))
+plot(sampleTree, main = "Sample clustering without outliers", sub="", xlab="", cex.lab = 1.5, 
+     cex.axis = 1.5, cex.main = 2)
+# Plot a line to show the cut
+abline(h = 30, col = "red")
+
+```
+## 3. Load sample traits data
+
+Now we load a txt file containing the samples trait data and we will join them with expression data object.
+```{r}
+traitData<- MouseTraits_12_16
+dim(traitData)
+names(traitData)
+# remove columns that hold information we do not need.
+#allTraits = traitData[, -c(31, 16)];
+#allTraits = allTraits[, c(2, 11:36) ];
+allTraits <- traitData
+dim(allTraits)
+names(allTraits)
+```
+
+
+```{r}
+femaleSamples = rownames(datExpr);
+traitRows = match(femaleSamples, allTraits$Mice);
+datTraits = as.data.frame(allTraits[traitRows, -1]);
+rownames(datTraits) = as.character(allTraits[traitRows, 1]);
+
+datTraits<-as.data.frame(MouseTraits_12_16)
+rownames(datTraits)<-datTraits$Mice
+datTraits<-datTraits[,-1]
+collectGarbage();
+```
+
+## 4. Visualize how the phenotipic traits relate to samples with a dendrogram based on GE.
+
+```{r}
+# Re-cluster samples
+sampleTree2 = hclust(dist(datExpr), method = "average")
+
+# Convert traits to a color representation: white means low, red means high, grey means missing entry
+traitColors = numbers2colors(datTraits, signed = FALSE);
+
+# Plot the sample dendrogram and the colors underneath.
+plotDendroAndColors(sampleTree2, traitColors,
+                    groupLabels = names(datTraits), 
+                    main = "Sample dendrogram and trait heatmap")
+
+```
+
+Save the plot.
+```{r}
+tiff('MouseDendrogram.tiff', units="cm", width=15.88, height=11.11, res=300, compression = 'lzw')
+par(cex = 0.6);
+par(mar = c(0,4,2,0))
+plotDendroAndColors(sampleTree2, traitColors,
+                    groupLabels = names(datTraits), 
+                    main = "Sample dendrogram and trait heatmap")
+
+dev.off()
+```
+Save the loaded data in R session and move to data folder.
+```{r}
+enableWGCNAThreads()
+save(datExpr, datTraits, file = "Mouse-dataInput.RData")
+```
+To load the data created in the last session you can directly load it using the following command.
+```{r}
+enableWGCNAThreads()
+# Load the data saved in the first part
+lnames = load(file = "Mouse-dataInput.RData");
+#The variable lnames contains the names of loaded variables.
+lnames
+```
+
+
+## 5. It is time to WGCNA!
+### 5.1 Select the appropiate SFT threshold. 
+```{r}
+sft <- pickSoftThreshold(normalized_counts_ok,
+  dataIsExpr = TRUE,
+  corFnc = cor)
+```
+
+
+Now we will decide on a power parameter based on the model fit shown in the next graph. WGCNA’s authors recommend using a power that has an signed R² above 0.80, otherwise they warn your results may be too noisy to be meaningful.
+
+If you have multiple power values with signed R2 above 0.80, then picking the one at an inflection point, in other words where the R2 values seem to have reached their saturation (Zhang and Horvath 2005). You want to use a power that gives you a big enough R2 but is not excessively large.
+
+If you find you have all very low R² values this may be because there are too many genes with low expression values that are cluttering up the calculations. You can try returning to gene filtering step and choosing a more stringent cutoff (you’ll then need to re-run the transformation and subsequent steps to remake this plot to see if that helped). Change filter number in  line 155.
+```{r}
+sft_df <- data.frame(sft$fitIndices) %>%
+  dplyr::mutate(model_fit = -sign(slope) * SFT.R.sq)
+```
+
+```{r}
+#tiff('MouseModelFit.tiff', units="cm", width=10, height=5.79, res=300, compression = 'lzw')
+# Plot the results:
+par(mfrow = c(1,2));
+par(cex = 0.6, mar = c(0,4,2,0))
+# Scale-free topology fit index as a function of the soft-thresholding power
+plot(sft_df$Power, sft_df$model_fit,
+     ylim=c(min(sft_df$model_fit), 1.02),
+     xlab="Soft Threshold (power)",ylab="Scale Free Topology Model Fit,signed R^2",type="n",
+     main = paste("Scale independence"));
+text(sft_df$Power, sft_df$model_fit,
+     labels=sft_df$Power,col="red");
+# this line coresponds to using an R^2 cut-off of h
+abline(h=0.73,col="red")
+# Mean connectivity as a function of the soft-thresholding power
+plot(sft_df$Power, sft_df$mean.k.,
+     xlab="Soft Threshold (power)",ylab="Mean Connectivity", type="n",
+     main = paste("Mean connectivity"))
+text(sft_df$Power, sft_df$mean.k., labels=sft_df$Power, col="red")
+abline(h=160,col="red")
+#dev.off()
+
+```
+
+
+
+### 5.2 Check connectivity statisttics
+One can explore connectivity using different statistical measures. Here we use the mean of connectivity (k), as recommended.
+We can  plot mean connectivity frequency using:
+
+```{r}
+# here we define the adjacency matrix using soft thresholding with beta=6
+ADJ1=abs(cor(datExpr,use="p"))^12
+# When you have relatively few genes (<5000) use the following code
+#k=as.vector(apply(ADJ1,2,sum, na.rm=T))
+# When you have a lot of genes use the following code
+k=softConnectivity(datE=datExpr,power=12) 
+# Plot a histogram of k and a scale free topology plot
+#tiff('MouseMeanConnectivity.tiff', units="cm", width=10, height=5.79, res=300, compression = 'lzw')
+# Plot the results:
+par(mfrow = c(1,2));
+par(cex = 0.4, mar = c(0,4,4,0))
+hist(k)
+scaleFreePlot(k, main="Check scale free topology\n")
+#dev.off()
+
+```
+The left panel shows a histogram of network connectivities.  The right panel shows a log-log plot of the same histogram.  The approximate straight line relationship (highR2value) shows approximate scale free topology.  Inmost applications we find that scale free topology is at least approximately satisfied when a high power is chosen fordefining the adjacency matrix.  We should point out that is not necessary that a network satisfies scale free topology;scale free topology may not be satisfied if the data are comprised of globally very distinct groups of samples (e.g.different tissues types).  Poor fit to scale free topology may also indicate the presence of array outliers.
+
+### 5.3 Generate the network object
+Once the assumptions of the model are met (scale free topology and high connectivity) you can proceed to generate the network.
+
+```{r}
+cor <- WGCNA::cor
+net = blockwiseModules(datExpr, power = 12,
+                       TOMType = "unsigned", minModuleSize = 30,
+                       reassignThreshold = 0, mergeCutHeight = 0.25,
+                       numericLabels = TRUE, pamRespectsDendro = FALSE,
+                       saveTOMs = TRUE,
+                       saveTOMFileBase = "MouseTOM", 
+                       verbose = 3)
+```
+
+
+The code above takes time and computer power to process. It is useful to save the net output: modules created, gene tree, labels...
+
+```{r}
+
+moduleLabels = net$colors
+moduleColors = labels2colors(net$colors)
+MEs = net$MEs;
+geneTree = net$dendrograms[[1]];
+save(MEs, moduleLabels, moduleColors, geneTree, 
+     file = "Mouse-networkConstruction-auto.RData")
+```
+
+
+## 6. Visualize the modules produced
+```{r}
+# open a graphics window
+sizeGrWindow(12, 9)
+# Convert labels to colors for plotting
+mergedColors = labels2colors(net$colors)
+# Plot the dendrogram and the module colors underneath
+plotDendroAndColors(net$dendrograms[[1]], mergedColors[net$blockGenes[[1]]],
+                    "Module colors",
+                    dendroLabels = FALSE, hang = 0.05,
+                    addGuide = TRUE, guideHang = 0.05)
+```
+
+
+
+
+
+```{r}
+# Define numbers of genes and samples
+nGenes = ncol(datExpr);
+nSamples = nrow(datExpr);
+# Recalculate MEs with color labels
+MEs0 = moduleEigengenes(datExpr, moduleColors)$eigengenes
+MEs = orderMEs(MEs0)
+moduleTraitCor = cor(MEs, datTraits, use = "p");
+moduleTraitPvalue = corPvalueStudent(moduleTraitCor, nSamples);
+```
+
+And check its association to the phenotipic data introduced earlier.
+```{r}
+sizeGrWindow(10,6)
+# Will display correlations and their p-values
+textMatrix =  paste(signif(moduleTraitCor, 2), " (",
+                    signif(moduleTraitPvalue, 1), ")", sep = "");
+dim(textMatrix) = dim(moduleTraitCor)
+par(mar = c(6, 8.5, 3, 3));
+# Display the correlation values within a heatmap plot
+labeledHeatmap(Matrix = moduleTraitCor,
+               xLabels = names(datTraits),
+               yLabels = names(MEs),
+               ySymbols = names(MEs),
+               colorLabels = FALSE,
+               colors = blueWhiteRed (50),
+               textMatrix = textMatrix,
+               setStdMargins = FALSE,
+               cex.text = 0.8,
+               zlim = c(-1,1),
+               main = paste("Module-trait relationships"))
+```
+
+We can also do a dendrogram of the modules and their distance to the trait of interest. 
+
+```{r}
+
+# Recalculate module eigengenes
+MEs = moduleEigengenes(datExpr, moduleColors)$eigengenes
+# Isolate weight from the clinical traits
+sex = as.data.frame(datTraits$sex);
+names(sex) = "sex"
+# Add the weight to existing module eigengenes
+MET = orderMEs(cbind(MEs, sex))
+# Plot the relationships among the eigengenes and the trait
+sizeGrWindow(5,7.5);
+par(cex = 0.9)
+plotEigengeneNetworks(MET, "", marDendro = c(0,4,1,2), marHeatmap = c(3,4,1,2), cex.lab = 0.8, xLabelsAngle
+                      = 90)
+```
+In this section we calculate gene significance for the trait of interest vs. their module membership. 
+```{r}
+# Define variable weight containing the sex column of datTrait
+weight = as.data.frame(datTraits$sex);
+names(weight) = "sex"
+# names (colors) of the modules
+modNames = substring(names(MEs), 3)
+
+geneModuleMembership = as.data.frame(cor(datExpr, MEs, use = "p"));
+MMPvalue = as.data.frame(corPvalueStudent(as.matrix(geneModuleMembership), nSamples));
+
+names(geneModuleMembership) = paste("MM", modNames, sep="");
+names(MMPvalue) = paste("p.MM", modNames, sep="");
+
+geneTraitSignificance = as.data.frame(cor(datExpr, weight, use = "p"));
+GSPvalue = as.data.frame(corPvalueStudent(as.matrix(geneTraitSignificance), nSamples));
+
+names(geneTraitSignificance) = paste("GS.", names(weight), sep="");
+names(GSPvalue) = paste("p.GS.", names(weight), sep="");
+```
+
+And visualize  the results per each module.
+
+
+```{r}
+#tiff('MouseGSIModules.tiff', units="cm", width=10, height=5.79, res=300, compression = 'lzw')
+module = "brown"
+column = match(module, modNames);
+moduleGenes = moduleColors==module;
+
+sizeGrWindow(7, 7);
+par(mfrow = c(1,2));
+verboseScatterplot(abs(geneModuleMembership[moduleGenes, column]),
+                   abs(geneTraitSignificance[moduleGenes, 1]),
+                   xlab = paste("Module Membership in", module, "module"),
+                   ylab = "Gene significance for sex",
+                   main = paste("Module membership vs. gene significance\n"),
+                   cex.main = 1.2, cex.lab = 1.2, cex.axis = 1.2, col = module)
+
+module = "brown"
+column = match(module, modNames);
+moduleGenes = moduleColors==module;
+verboseScatterplot(abs(geneModuleMembership[moduleGenes, column]),
+                   abs(geneTraitSignificance[moduleGenes, 1]),
+                   xlab = paste("Module Membership in", module, "module"),
+                   ylab = "Gene significance for sex",
+                   main = paste("Module membership vs. gene significance\n"),
+                   cex.main = 1.2, cex.lab = 1.2, cex.axis = 1.2, col = module)
+#dev.off()
+```
+Using this graphs we can identify the modules that are associated to the trait which also have a significant correlation between module membership and gene significance. These are the genes with interestig properties for further analysis. As an example, we can also visualize modules which are associated to the trait but the module membership is weak, as it happens with black module shown below.
+
+```{r}
+
+module = "black"
+column = match(module, modNames);
+moduleGenes = moduleColors==module;
+
+
+verboseScatterplot(abs(geneModuleMembership[moduleGenes, column]),
+                   abs(geneTraitSignificance[moduleGenes, 1]),
+                   xlab = paste("Module Membership in", module, "module"),
+                   ylab = "Gene significance for sex",
+                   main = paste("Module membership vs. gene significance\n"),
+                   cex.main = 1.2, cex.lab = 1.2, cex.axis = 1.2, col = module)
+
+
+```
+
+
+
+
+
+Here we decided to continue working with the red (R²= 0.98, *P*<0.001) and brown (R²= -0.75, *P*<0.008) modules. We obtained a total of **3,070 genes, 745 genes from the red module and 2,325 genes in the brown module**. Generate a txt file to store the gene lists. 
+
+```{r}
+datExpr<-as.data.frame(datExpr)
+red<-names(datExpr)[moduleColors=="red"]
+write.table(red, file="red_GeneNames_Mouse_M4.txt", row.names = T, sep = "\t")
+
+brown<-names(datExpr)[moduleColors=="brown"]
+write.table(brown, file="brown_GeneNames_Mouse_M4.txt", row.names = T, sep = "\t")
+```
+
+Once the modules have been identified and chosen, we can filter by DEGs lists without affecting network matematical properties.
+
+```{r}
+modulesGenesList<-as.data.frame(c(brown))
+names(modulesGenesList)[1] <- "GeneID"
+
+F.vs.M_filter1<-read.delim("DEGsF.vs.M_filter005_Mouse_M4.txt", header=TRUE, sep="\t")
+DEGsModuleGenes<-merge(modulesGenesList,F.vs.M_filter1, by="GeneID")
+```
+
+## ANNOTATION
+Now we can retirieve the gene symbol from ensemble for the geneIDs in our output list of genes.
+```{r}
+library(devtools)
+library(xml2)
+library(biomaRt)
+
+ensembl=useMart("ensembl")
+ensembl = useDataset("mmusculus_gene_ensembl", mart = ensembl)
+entrzID=DEGsModuleGenes[,1]
+GeneSymbol<- getBM(attributes = c("ensembl_gene_id", "external_gene_name"), 
+      filters = "ensembl_gene_id", 
+      values = entrzID, 
+      mart = ensembl)
+names(GeneSymbol)[1] <- "GeneID"
+names(GeneSymbol)[2] <- "GeneSymbol"
+DEGsModuleGenesSymb<-merge(DEGsModuleGenes,GeneSymbol, by="GeneID")
+write.table(DEGsModuleGenes, file="DEGsModuleGenes_Mouse_M4.txt", row.names = T, sep = "\t")
+```
+
+
+
+Now we have the gene lists of co-expressed and correlated to sex which are alsos DE, we can visualize the top candidates with highest weight and connectivity. 
+Here is the raw script to prepare network file.
+
+```{r}
+TOM = TOMsimilarityFromExpr(datExpr, power = 12);
+
+# Select modules
+modules = c("brown");
+
+# Select module probes
+probes = names(datExpr)
+inModule = is.finite(match(moduleColors, modules));
+modProbes = probes[inModule];
+
+modGenes = DEGsModuleGenes$GeneID[match(modProbes, DEGsModuleGenes$GeneID)];
+
+
+# Select the corresponding Topological Overlap
+modTOM = TOM[inModule, inModule];
+dimnames(modTOM) = list(modProbes, modProbes)
+
+
+# Export the network into edge and node list files Cytoscape can read
+cyt = exportNetworkToCytoscape(modTOM,
+                               edgeFile = paste("Cytoscape-edges-", paste(modules, collapse="-"), ".txt", sep=""),
+                               nodeFile = paste("Cytoscape-nodes-", paste(modules, collapse="-"), ".txt", sep=""),
+                               weighted = TRUE,
+                               threshold = 0.10,
+                               nodeNames = modProbes,
+                               altNodeNames = modGenes,
+                               nodeAttr = moduleColors[inModule]);
+ 
+
+```
+
+
+
+### Appendix
+To load the data created in the last session you can directly load it using the following command.
+```{r}
+workingDir = "/home/nuria/Escritorio/Dropbox/Núria/01_ESTUDIS_ICM_ok/3. Networks Article 2021/WGCNA_mammals/RNA-seq_analysis";
+setwd(workingDir); 
+getwd()
+enableWGCNAThreads()
+# Load the data saved in the first part
+lnames = load(file = "Mouse-dataInput.RData");
+#The variable lnames contains the names of loaded variables.
+lnames
+
+# Load network data saved in the second part.
+lnames = load(file = "Mouse-networkConstruction-auto.RData");
+lnames
+
+```
